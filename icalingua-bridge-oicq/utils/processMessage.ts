@@ -1,13 +1,13 @@
-import { AtElem, FriendInfo, GroupMessageEventData, MemberBaseInfo, MessageElem } from 'oicq-icalingua-plus-plus'
-import Message from '../types/Message'
+import BilibiliMiniApp from '@icalingua/types/BilibiliMiniApp'
+import Message from '@icalingua/types/Message'
+import StructMessageCard from '@icalingua/types/StructMessageCard'
 import { base64decode } from 'nodejs-base64'
-import mime from './mime'
+import { AtElem, FriendInfo, GroupMessageEventData, MemberBaseInfo, MessageElem } from 'oicq-icalingua-plus-plus'
 import path from 'path'
 import adapter from '../adapters/oicqAdapter'
-import BilibiliMiniApp from '../types/BilibiliMiniApp'
-import StructMessageCard from '../types/StructMessageCard'
-import silkDecode from './silkDecode'
 import getImageUrlByMd5 from './getImageUrlByMd5'
+import mime from './mime'
+import silkDecode from './silkDecode'
 
 const processMessage = async (oicqMessage: MessageElem[], message: Message, lastMessage, roomId = null) => {
     if (!Array.isArray(oicqMessage)) oicqMessage = [oicqMessage]
@@ -224,13 +224,13 @@ const processMessage = async (oicqMessage: MessageElem[], message: Message, last
             case 'record':
                 try {
                     message.file = {
-                        type: 'audio/mp3',
+                        type: 'audio/ogg',
                         url: await silkDecode(m.data.url),
                     }
                     message.files.push(message.file)
                 } catch (e) {
                     message.file = null
-                    message.content = '[无法处理的语音]'
+                    message.content = '[无法处理的语音]' + m.data.url
                     message.code = JSON.stringify(e)
                 }
                 lastMessage.content = '[Audio]'
@@ -267,6 +267,39 @@ const processMessage = async (oicqMessage: MessageElem[], message: Message, last
                 lastMessage.content += '[随机骰子]'
                 message.content += '[随机骰子]点数' + m.data.id
                 break
+            case 'shake':
+                lastMessage.content += '[窗口抖动]'
+                message.content += '[窗口抖动]'
+                break
+            case 'poke':
+                const pokemap = {
+                    0: '回戳',
+                    1: '戳一戳',
+                    2: '比心',
+                    3: '点赞',
+                    4: '心碎',
+                    5: '666',
+                    6: '放大招',
+                    2000: '敲门',
+                    2001: '抓一下',
+                    2002: '碎屏',
+                    2003: '勾引',
+                    2004: '手雷',
+                    2005: '结印',
+                    2006: '召唤术',
+                    2007: '玫瑰花',
+                    2009: '让你皮',
+                    2011: '宝贝球',
+                }
+                lastMessage.content += '[' + (pokemap[m.data.type] || pokemap[m.data.id]) + ']'
+                message.content += '[' + (pokemap[m.data.type] || pokemap[m.data.id]) + ']'
+                break
+            case 'sface':
+                lastMessage.content += '[sFace: ' + m.data.text + '(' + m.data.id + ')]'
+                message.content += '[sFace: ' + m.data.text + '(' + m.data.id + ')]'
+                break
+            default:
+                console.log('[无法解析的消息]', m)
         }
         lastType = m.type
     }

@@ -1,7 +1,7 @@
+import Message from '@icalingua/types/Message'
+import OnlineData from '@icalingua/types/OnlineData'
+import Room from '@icalingua/types/Room'
 import { ipcMain } from 'electron'
-import Message from '../../types/Message'
-import OnlineData from '../../types/OnlineData'
-import Room from '../../types/Room'
 import { updateAppMenu } from '../ipc/menuManager'
 import { updateTrayIcon } from './trayManager'
 import { sendToMainWindow, sendToRequestWindow } from './windowManager'
@@ -19,8 +19,8 @@ export default {
     openGroupMemberPanel(shown: boolean) {
         sendToMainWindow('openGroupMemberPanel', shown)
     },
-    startForward() {
-        sendToMainWindow('startForward')
+    startForward(_id: string) {
+        sendToMainWindow('startForward', _id)
     },
     confirmDeleteMessage(roomId: number, messageId: string) {
         sendToMainWindow('confirmDeleteMessage', { roomId, messageId })
@@ -75,6 +75,9 @@ export default {
     },
     deleteMessage(messageId: string | number) {
         sendToMainWindow('deleteMessage', messageId)
+    },
+    hideMessage(messageId: string | number) {
+        sendToMainWindow('hideMessage', messageId)
     },
     revealMessage(messageId: string | number) {
         sendToMainWindow('revealMessage', messageId)
@@ -135,5 +138,8 @@ export default {
     },
     setKeyToSendMessage(key: 'Enter' | 'CtrlEnter' | 'ShiftEnter') {
         sendToMainWindow('setKeyToSendMessage', key)
+    },
+    pasteGif(url: string) {
+        sendToMainWindow('pasteGif', url)
     },
 }

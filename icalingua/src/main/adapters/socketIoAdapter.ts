@@ -1,40 +1,40 @@
-import Adapter, { CookiesDomain } from '../../types/Adapter'
-import LoginForm from '../../types/LoginForm'
-import Room from '../../types/Room'
-import Message from '../../types/Message'
-import { FakeMessage, FileElem, GroupInfo, MemberInfo } from 'oicq-icalingua-plus-plus'
-import IgnoreChatInfo from '../../types/IgnoreChatInfo'
-import SendMessageParams from '../../types/SendMessageParams'
-import { io, Socket } from 'socket.io-client'
-import { getConfig } from '../utils/configManager'
-import { sign } from 'noble-ed25519'
-import { app, dialog, BrowserWindow, Notification as ElectronNotification } from 'electron'
-import { getMainWindow, loadMainWindow, sendToLoginWindow, showLoginWindow, showWindow } from '../utils/windowManager'
-import { createTray, updateTrayIcon } from '../utils/trayManager'
-import ui from '../utils/ui'
-import { updateAppMenu } from '../ipc/menuManager'
-import avatarCache from '../utils/avatarCache'
-import fs from 'fs'
-import fileType from 'file-type'
+import Adapter, { CookiesDomain } from '@icalingua/types/Adapter'
+import BridgeVersionInfo from '@icalingua/types/BridgeVersionInfo'
+import IgnoreChatInfo from '@icalingua/types/IgnoreChatInfo'
+import LoginForm from '@icalingua/types/LoginForm'
+import Message from '@icalingua/types/Message'
+import OnlineData from '@icalingua/types/OnlineData'
+import RoamingStamp from '@icalingua/types/RoamingStamp'
+import Room from '@icalingua/types/Room'
+import SearchableFriend from '@icalingua/types/SearchableFriend'
+import SendMessageParams from '@icalingua/types/SendMessageParams'
 import axios from 'axios'
-import RoamingStamp from '../../types/RoamingStamp'
-import OnlineData from '../../types/OnlineData'
-import SearchableFriend from '../../types/SearchableFriend'
+import { app, dialog, Notification as ElectronNotification } from 'electron'
+import fileType from 'file-type'
 import { Notification } from 'freedesktop-notifications'
-import isInlineReplySupported from '../utils/isInlineReplySupported'
-import BridgeVersionInfo from '../../types/BridgeVersionInfo'
-import errorHandler from '../utils/errorHandler'
-import getBuildInfo from '../utils/getBuildInfo'
-import { checkUpdate, getCachedUpdate } from '../utils/updateChecker'
+import fs from 'fs'
+import { sign } from 'noble-ed25519'
+import { FakeMessage, FileElem, GroupInfo, MemberInfo } from 'oicq-icalingua-plus-plus'
 import path from 'path'
-import getStaticPath from '../../utils/getStaticPath'
+import { io, Socket } from 'socket.io-client'
 import formatDate from '../../utils/formatDate'
 import getAvatarUrl from '../../utils/getAvatarUrl'
+import getStaticPath from '../../utils/getStaticPath'
 import { newIcalinguaWindow } from '../../utils/IcalinguaWindow'
+import { updateAppMenu } from '../ipc/menuManager'
+import avatarCache from '../utils/avatarCache'
+import { getConfig } from '../utils/configManager'
+import errorHandler from '../utils/errorHandler'
+import getBuildInfo from '../utils/getBuildInfo'
+import isInlineReplySupported from '../utils/isInlineReplySupported'
+import { createTray, updateTrayIcon } from '../utils/trayManager'
+import ui from '../utils/ui'
+import { checkUpdate, getCachedUpdate } from '../utils/updateChecker'
+import { getMainWindow, loadMainWindow, sendToLoginWindow, showLoginWindow, showWindow } from '../utils/windowManager'
 
 // 这是所对应服务端协议的版本号，如果协议有变动比如说调整了 API 才会更改。
 // 如果只是功能上的变动的话就不会改这个版本号，混用协议版本相同的服务端完全没有问题
-const EXCEPTED_PROTOCOL_VERSION = '2.1.9'
+const EXCEPTED_PROTOCOL_VERSION = '2.2.2'
 
 let socket: Socket
 let uin = 0
@@ -141,9 +141,6 @@ const attachSocketEvents = () => {
                 //notification
                 if (process.platform === 'darwin' || process.platform === 'win32') {
                     if (!ElectronNotification.isSupported()) return
-                    if (process.platform === 'win32') {
-                        app.setAppUserModelId(process.execPath)
-                    }
                     const notif = new ElectronNotification({
                         title: data.data.title,
                         body: data.data.body,
@@ -309,8 +306,8 @@ const adapter: Adapter = {
     setGroupAnonymousBan(gin: number, flag: string, duration?: number): any {
         socket.emit('setGroupAnonymousBan', gin, flag, duration)
     },
-    makeForward(fakes: FakeMessage | Iterable<FakeMessage>, dm?: boolean, target?: number): any {
-        socket.emit('makeForward', fakes, dm, target)
+    makeForward(fakes: FakeMessage | Iterable<FakeMessage>, dm?: boolean, origin?: number, target?: number): any {
+        socket.emit('makeForward', fakes, dm, origin, target)
     },
     reportRead(messageId: string): any {
         socket.emit('reportRead', messageId)
@@ -426,6 +423,10 @@ const adapter: Adapter = {
     },
     deleteMessage(roomId: number, messageId: string) {
         socket.emit('deleteMessage', roomId, messageId)
+    },
+    hideMessage(roomId: number, messageId: string) {
+        ui.hideMessage(messageId)
+        socket.emit('hideMessage', roomId, messageId)
     },
     fetchHistory(messageId: string, roomId?: number) {
         if (!roomId) roomId = ui.getSelectedRoomId()

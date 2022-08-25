@@ -76,13 +76,11 @@
                                 :show-new-messages-divider="showNewMessagesDivider"
                                 :text-formatting="textFormatting"
                                 :emojis-list="emojisList"
-                                :hide-options="hideOptions"
                                 :showForwardPanel="showForwardPanel"
+                                :selectedMessage="selectedMessage"
                                 :linkify="linkify"
                                 @open-file="openFile"
-                                @open-user-tag="openUserTag"
                                 @add-new-message="addNewMessage"
-                                @hide-options="hideOptions = $event"
                                 @ctx="msgctx(m)"
                                 @avatar-ctx="avatarCtx(m)"
                                 @download-image="$emit('download-image', $event)"
@@ -135,20 +133,17 @@
                 :messages="messages"
                 :showForwardPanel="showForwardPanel"
                 :msgstoForward="msgstoForward"
+                @choose-forward-target="$emit('choose-forward-target')"
                 @close-forward-panel="closeForwardPanel"
                 :account="account"
                 :username="username"
                 :roomId="roomId"
             />
-            <!-- <room-users-tag
-                    :filtered-users-tag="filteredUsersTag"
-                    @select-user-tag="selectUserTag($event)"
-                  /> -->
             <div style="padding-top: 10px; padding-left: 10px; color: var(--panel-color-desc)" v-if="editAndResend">
                 编辑重发
             </div>
 
-            <div class="vac-box-footer" :class="{ 'vac-app-box-shadow': filteredUsersTag.length }">
+            <div class="vac-box-footer">
                 <div v-if="imageFile" class="vac-media-container">
                     <div class="vac-svg-button vac-icon-media" @click="resetMediaFile">
                         <slot name="image-close-icon">
@@ -230,9 +225,11 @@
                         inputSize="200"
                         @cancel="closeQuickAt"
                         @confirm="useQuickAt"
+                        @nomatch="nomatchQuickAt"
                     >
-                        <p :style="{ wordWrap: 'break-word' }">{{ name }}</p>
-                        <p :style="{ fontFamily: 'monospace' }">{{ id }}</p>
+                        <el-avatar size="small" v-if="id !== 0" :src="`https://q1.qlogo.cn/g?b=qq&nk=${id}&s=140`" />
+                        <p style="wordwrap: 'break-word'; margin-right: auto; margin-left: 5px">{{ name }}</p>
+                        <p v-if="id !== 0" style="fontfamily: 'monospace'">{{ id }}</p>
                     </SearchInput>
                 </transition>
 
@@ -251,6 +248,7 @@
                     }"
                     @input="onChangeInput"
                     @click.right="textctx"
+                    spellcheck="false"
                 />
 
                 <div class="vac-icon-textarea">
@@ -324,7 +322,6 @@ const faceDir = path.join(getStaticPath(), 'face')
 
 import { ipcRenderer } from 'electron'
 
-const { messagesValid } = require('../../utils/roomValidation')
 const { detectMobile, iOSDevice } = require('../../utils/mobileDetection')
 const { isImageFile, isVideoFile } = require('../../utils/mediaFile')
 
@@ -344,8 +341,6 @@ export default {
         RoomForwardMessage,
         Message,
         SearchInput,
-        SearchInput,
-        SearchInput,
     },
     directives: {
         clickOutside: vClickOutside.directive,
@@ -359,7 +354,6 @@ export default {
         roomId: { type: [String, Number], required: true },
         loadFirstRoom: { type: Boolean, required: true },
         messages: { type: Array, required: true },
-        roomMessage: { type: String, default: null },
         messagesLoaded: { type: Boolean, required: true },
         menuActions: { type: Array, required: true },
         messageActions: { type: Array, required: true },
@@ -395,13 +389,10 @@ export default {
             mediaDimensions: null,
             fileDialog: false,
             emojiOpened: false,
-            hideOptions: true,
             scrollIcon: false,
             scrollMessagesCount: 0,
             newMessages: [],
             keepKeyboardOpen: false,
-            filteredUsersTag: [],
-            selectedUsersTag: [],
             textareaCursorPosition: null,
             textMessages: require('../../locales').default,
             editAndResend: false,
@@ -412,6 +403,8 @@ export default {
             faceNames,
             faceDir,
             groupMembers: null,
+            useAtKey: false,
+            selectedMessage: '',
         }
     },
     computed: {
@@ -443,30 +436,13 @@ export default {
                 this.scrollIcon = false
                 this.scrollMessagesCount = 0
                 //this.resetMessage(true)
-                if (this.roomMessage) {
-                    this.message = this.roomMessage
-                    setTimeout(() => this.onChangeInput(), 0)
-                }
+
                 this.editAndResend = false
-                this.msgstoForward = []
+                this.closeForwardPanel()
                 await this.updateGroupMembers()
             }
         },
-        roomMessage: {
-            immediate: true,
-            handler(val) {
-                if (val) this.message = this.roomMessage
-            },
-        },
         messages(newVal, oldVal) {
-            newVal.forEach((message) => {
-                if (!messagesValid(message)) {
-                    throw new Error(
-                        'Messages object is not valid! Must contain _id[String, Number], content[String, Number] and senderId[String, Number]',
-                    )
-                }
-            })
-
             const element = this.$refs.scrollContainer
             if (!element) return
 
@@ -548,6 +524,7 @@ export default {
             } else if (e.key === 'ArrowUp') {
                 if (this.message) return
                 //编辑重发上一条消息
+                e.preventDefault()
                 const ownMessages = this.messages.filter((e) => e.senderId === this.currentUserId)
                 if (!ownMessages.length) return
                 const lastMessage = ownMessages[ownMessages.length - 1]
@@ -606,10 +583,7 @@ export default {
                 const f = event.dataTransfer.files[0]
                 const index = f.name.lastIndexOf('.')
                 const ext = f.name.substr(index + 1).toLowerCase()
-                if (
-                    ['png', 'jpg', 'jpeg', 'bmp', 'gif', 'webp', 'svg', 'tiff'].includes(ext) ||
-                    process.platform === 'linux'
-                ) {
+                if (this.roomId < 0 || ['png', 'jpg', 'jpeg', 'bmp', 'gif', 'webp', 'svg', 'tiff'].includes(ext)) {
                     this.onFileChange(event.dataTransfer.files)
                 }
             }
@@ -617,18 +591,89 @@ export default {
     },
     async created() {
         keyToSendMessage = await ipc.getKeyToSendMessage()
-        ipcRenderer.on('startForward', () => (this.showForwardPanel = true))
+        ipcRenderer.on('startForward', (_, _id) => {
+            if (this.showForwardPanel) return
+            this.selectedMessage = _id
+            this.msgstoForward.push(_id)
+            this.showForwardPanel = true
+        })
         ipcRenderer.on('replyMessage', (_, message) => this.replyMessage(message))
         ipcRenderer.on('setKeyToSendMessage', (_, key) => (keyToSendMessage = key))
         ipcRenderer.on('addMessageText', (_, message) => {
             this.message += message
             this.focusTextarea()
+            this.$nextTick(() => this.resizeTextarea())
+        })
+        ipcRenderer.on('pasteGif', (_, GifURL) => {
+            this.onPasteGif(GifURL)
+            this.$emit('stickers-panel')
         })
     },
     methods: {
+        sendForward(target, name) {
+            if (this.msgstoForward.length <= 0) {
+                console.log('No Message Selected.')
+                return
+            }
+            const ForwardMessages = []
+            const dm = target > 0
+
+            this.messages.forEach((message) => {
+                this.msgstoForward.forEach((msgId) => {
+                    if (message._id === msgId) {
+                        ForwardMessages.push(message)
+                    }
+                })
+            })
+            const messagesToSend = []
+            ForwardMessages.forEach((msg) => {
+                const singleMessage = {
+                    user_id: 0,
+                    message: [],
+                    nickname: '',
+                    time: 0,
+                }
+                if (msg) {
+                    singleMessage.user_id = msg.senderId
+                    singleMessage.message.push({
+                        type: 'text',
+                        data: {
+                            text: msg.content,
+                        },
+                    })
+                    if (msg.files) {
+                        msg.files.forEach((file) => {
+                            if (file.type.startsWith('image/'))
+                                singleMessage.message.push({
+                                    type: 'image',
+                                    data: {
+                                        file: file.url.startsWith('data:image')
+                                            ? 'base64://' + file.url.replace(/^data:.+;base64,/, '')
+                                            : file.url,
+                                        type: 'image',
+                                    },
+                                })
+                        })
+                    }
+                    singleMessage.nickname = msg.senderId !== this.account ? msg.username : this.username
+                    singleMessage.time = Math.floor(msg.time / 1000)
+                    messagesToSend.push(singleMessage)
+                }
+            })
+            const origin = parseInt(String(this.roomId))
+            this.$emit('start-chat', target, name)
+
+            if (origin < 0) {
+                ipc.makeForward(messagesToSend, dm, -origin, target)
+            } else {
+                ipc.makeForward(messagesToSend, dm, undefined, target)
+            }
+            this.closeForwardPanel()
+        },
         closeForwardPanel() {
             this.showForwardPanel = false
             this.msgstoForward = []
+            this.selectedMessage = ''
             console.log('closeForwardPanel')
         },
         addMsgtoForward(messageId) {
@@ -637,6 +682,9 @@ export default {
         },
         delMsgtoForward(messageId) {
             this.msgstoForward = this.msgstoForward.filter((e) => e !== messageId)
+            if (this.msgstoForward.length === 0) {
+                this.closeForwardPanel()
+            }
             console.log('delMsgtoForward')
         },
         onMediaLoad() {
@@ -660,7 +708,6 @@ export default {
                 return
             }
 
-            this.selectedUsersTag = []
             this.resetTextareaSize()
             this.message = ''
             this.editedMessage = {}
@@ -681,6 +728,7 @@ export default {
             this.editedMessage.file = null
             this.file = null
             this.focusTextarea()
+            this.$nextTick(() => this.resizeTextarea())
         },
         resetTextareaSize() {
             if (!this.$refs['roomTextarea']) return
@@ -714,46 +762,60 @@ export default {
         },
         closeQuickAt() {
             this.isQuickAtOn = false
+            this.useAtKey = false
             this.focusTextarea()
         },
         useQuickAt(id, name) {
             this.isQuickAtOn = false
             if (typeof id === 'number') {
                 const atText = `@${name}`
-                ipc.pushAtCache({
-                    text: atText,
-                    id: id,
-                })
-                this.useMessageContent(atText + ' ')
+                if (id !== 0 && name !== '全体成员') {
+                    ipc.pushAtCache({
+                        text: atText,
+                        id: id,
+                    })
+                }
+                this.useMessageContent((this.useAtKey ? name : atText) + ' ')
             }
+            this.useAtKey = false
             setTimeout(() => this.focusTextarea(), 0)
         },
-        sendMessage() {
+        nomatchQuickAt(search) {
+            if (!this.useAtKey) return
+            this.isQuickAtOn = false
+            this.useAtKey = false
+            this.useMessageContent(search)
+            setTimeout(() => this.focusTextarea(), 0)
+        },
+        async sendMessage() {
             let message = this.message.trim()
 
             if (!this.file && !message) return
+
+            const messageType = await ipc.getMessgeTypeSetting()
 
             this.$emit('send-message', {
                 content: message,
                 file: this.file,
                 replyMessage: this.messageReply,
-                usersTag: this.selectedUsersTag,
                 resend: this.editAndResend,
-                messageType: 'text',
+                messageType: messageType,
             })
 
             this.resetMessage(true)
         },
-        sendStructMessage(msgType) {
+        async sendStructMessage(msgType) {
+            const debugmode = await ipc.getDebugSetting()
             let message = this.message.trim()
 
             if (!this.file && !message) return
+
+            if (!debugmode && message.match(/serviceID[\s]*?=[\s]*?('|")(13|60|76|83)('|")/g)) return
 
             this.$emit('send-message', {
                 content: message,
                 file: this.file,
                 replyMessage: this.messageReply,
-                usersTag: this.selectedUsersTag,
                 resend: this.editAndResend,
                 messageType: msgType,
             })
@@ -790,6 +852,7 @@ export default {
             }
         },
         replyMessage(message, e) {
+            if (this.showForwardPanel && e) return
             if (e && e.path[1].classList.contains('el-avatar')) return // prevent avatar dblclick
             if (message.system || message.flash) return
             this.messageReply = message
@@ -822,6 +885,12 @@ export default {
             this.keepKeyboardOpen = true
             this.resizeTextarea()
             this.$emit('typing-message', this.message)
+            const selectionStart = this.$refs.roomTextarea.selectionStart
+            if (this.room.roomId < 0 && this.message.slice(selectionStart - 1, selectionStart) === '@') {
+                this.useAtKey = true
+                this.isQuickAtOn = true
+                this.$nextTick(() => this.$refs.quickat.focus())
+            }
         },
         resizeTextarea() {
             const el = this.$refs['roomTextarea']
@@ -891,9 +960,6 @@ export default {
         openFile({ message, action }) {
             this.$emit('open-file', { message, action, room: this.room })
         },
-        openUserTag(user) {
-            this.$emit('open-user-tag', user)
-        },
         textareaActionHandler() {
             this.$emit('textarea-action-handler', this.message)
         },
@@ -905,7 +971,6 @@ export default {
             ipc.popupAvatarMenu(message, this.room)
         },
         containerScroll(e) {
-            this.hideOptions = true
             setTimeout(() => {
                 if (!e.target) return
 
@@ -920,7 +985,18 @@ export default {
         },
         async updateGroupMembers() {
             const { roomId } = this.room
-            if (roomId < 0) this.groupMembers = await ipc.getGroupMembers(-roomId)
+            if (roomId < 0) {
+                const groupMembers = await ipc.getGroupMembers(-roomId)
+                const self = groupMembers.find((member) => member.user_id === this.currentUserId)
+                if (self && (self.role === 'owner' || self.role === 'admin')) {
+                    groupMembers.unshift({
+                        card: '全体成员',
+                        nickname: '全体成员',
+                        user_id: 0,
+                    })
+                }
+                this.groupMembers = groupMembers
+            }
         },
     },
 }
@@ -1132,7 +1208,7 @@ export default {
 }
 
 .vac-file-message-room {
-    max-width: calc(100% - 75px);
+    max-width: 300px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

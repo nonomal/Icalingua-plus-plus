@@ -1,4 +1,4 @@
-import { app, protocol } from 'electron'
+import { app, Menu, protocol } from 'electron'
 import { destroyWindow, showLoginWindow, showWindow } from './utils/windowManager'
 import { createBot, logOut } from './ipc/botAndStorage'
 import { getConfig } from './utils/configManager'
@@ -8,6 +8,7 @@ require('./utils/configManager')
 require('./ipc/system')
 require('./ipc/botAndStorage')
 require('./ipc/openImage')
+app.setAppUserModelId('Icalingua++')
 protocol.registerBufferProtocol('jsbridge', () => {})
 if (process.env.NODE_ENV === 'development')
     protocol.registerFileProtocol('file', (request, cb) => {
@@ -19,6 +20,9 @@ if (getConfig().account.autologin || getConfig().adapter === 'socketIo') {
 } else {
     showLoginWindow()
 }
+
+app.on('activate', showWindow)
+
 app.on('window-all-closed', () => {
     logOut()
     setTimeout(() => {

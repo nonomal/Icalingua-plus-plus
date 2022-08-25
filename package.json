@@ -1,0 +1,15 @@
+{
+  "name": "icalingua-plus-plus",
+  "workspaces": [
+    "icalingua",
+    "icalingua-bridge-oicq",
+    "packages/*"
+  ],
+  "dependencies": {
+    "@icalingua/storage-providers": "workspace:*",
+    "@icalingua/types": "workspace:*",
+    "icalingua": "workspace:2.6.8",
+    "icalingua-bridge-oicq": "workspace:2.3.1"
+  },
+  "packageManager": "pnpm@7.8.0"
+}

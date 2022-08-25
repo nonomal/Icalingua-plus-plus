@@ -63,6 +63,8 @@
                     @open-forward="openForward"
                     @fetch-messages="fetchMessage"
                     @open-group-member-panel="groupmemberShown = true"
+                    @choose-forward-target="chooseForwardTarget"
+                    @start-chat="startChat"
                 >
                     <template v-slot:menu-icon>
                         <i class="el-icon-more"></i>
@@ -120,6 +122,9 @@
         </el-dialog>
         <el-dialog title="联系人" :visible.sync="contactsShown" top="5vh" class="dialog">
             <TheContactsPanel @dblclick="startChat" />
+        </el-dialog>
+        <el-dialog title="转发到..." :visible.sync="forwardShown" top="5vh" class="dialog">
+            <TheContactsPanel @click="sendForward" />
         </el-dialog>
         <el-dialog title="群成员" :visible.sync="groupmemberShown" top="5vh" class="dialog">
             <TheGroupMemberPanel
@@ -187,6 +192,7 @@ export default {
             linkify: true,
             roomPanelAvatarOnly: false,
             roomPanelWidth: undefined,
+            forwardShown: false,
         }
     },
     async created() {
@@ -214,9 +220,6 @@ export default {
         document.addEventListener('keydown', (e) => {
             if (e.repeat) {
                 return
-            }
-            else if (e.key === 'w' && e.ctrlKey === true) {
-                window.close()
             }
             else if (e.key === 'F1') {
                 if (this.selectedRoomId)
@@ -361,12 +364,22 @@ export default {
             const message = this.messages.find((e) => e._id === messageId)
             if (message) {
                 message.deleted = new Date()
+                message.reveal = false
+                this.messages = [...this.messages]
+            }
+        })
+        ipcRenderer.on('hideMessage', (_, messageId) => {
+            const message = this.messages.find((e) => e._id === messageId)
+            if (message) {
+                message.hide = true
+                message.reveal = false
                 this.messages = [...this.messages]
             }
         })
         ipcRenderer.on('revealMessage', (_, messageId) => {
             const message = this.messages.find((e) => e._id === messageId)
             if (message) {
+                message.hide = false
                 message.reveal = true
                 this.messages = [...this.messages]
             }
@@ -449,7 +462,9 @@ Chromium ${process.versions.chrome}` : ''
                 this.messagesLoaded = false
                 this.messages = []
             }
-            const msgs2add = await ipc.fetchMessage(this.selectedRoom.roomId, this.messages.length)
+            const _roomId = this.selectedRoom.roomId
+            const msgs2add = await ipc.fetchMessage(_roomId, this.messages.length)
+            if (_roomId !== this.selectedRoom.roomId) return
             setTimeout(() => {
                 if (msgs2add.length) {
                     this.messages = [...msgs2add, ...this.messages]
@@ -460,13 +475,15 @@ Chromium ${process.versions.chrome}` : ''
             return msgs2add[msgs2add.length - 1]
         },
         openImage: ipc.downloadFileByMessageData,
-        sendSticker(url) {
+        async sendSticker(url) {
+            const messageType = await ipc.getMessgeTypeSetting()
             if (this.selectedRoom)
                 this.sendMessage({
                     content: '',
                     room: this.selectedRoom,
                     imgpath: url,
                     sticker: true,
+                    messageType: messageType === 'anonymous' ? 'anonymous' : undefined,
                 })
             this.$refs.room.focusTextarea()
             if (window.innerWidth < 1200) {
@@ -501,8 +518,9 @@ Chromium ${process.versions.chrome}` : ''
             if ((typeof room) === 'number')
                 room = this.rooms.find(e => e.roomId === room)
             if (!room) return
-            if (this.selectedRoom.roomId === room.roomId) return
             this.selectedRoom.at = false
+            ipc.updateRoom(this.selectedRoom.roomId, { at: false })
+            if (this.selectedRoom.roomId === room.roomId) return
             this.selectedRoomId = room.roomId
             ipc.setSelectedRoom(room.roomId, room.roomName)
             this.fetchMessage(true)
@@ -550,6 +568,13 @@ Chromium ${process.versions.chrome}` : ''
         roomPanelResizeStop(pane, resizer, size) {
             const width = document.getElementsByClassName('panel rooms-panel')[0].offsetWidth
             ipc.setRoomPanelSetting(this.roomPanelAvatarOnly, width)
+        },
+        sendForward(id, name) {
+            this.$refs.room.sendForward(id, name)
+            this.forwardShown = false
+        },
+        chooseForwardTarget() {
+            this.forwardShown = true
         },
     },
     computed: {

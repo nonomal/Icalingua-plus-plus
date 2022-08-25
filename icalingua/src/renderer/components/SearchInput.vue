@@ -9,6 +9,7 @@
             @keydown.arrow-down="selectNext"
             @keydown.arrow-up="selectLast"
             @keydown.enter.prevent="confirm(selectedIndex)"
+            @keydown.backspace="breakspace"
             @input="selectedIndex = 0"
             @blur="$nextTick(cancel)"
         />
@@ -54,6 +55,11 @@ export default {
             this.selectedIndex = 0
             this.$emit('cancel')
         },
+        breakspace() {
+            if (this.search.length === 0) {
+                this.cancel()
+            }
+        },
         confirm(index) {
             const selected = this.matched[index] || []
             this.$emit('confirm', selected[1], selected[0])
@@ -77,7 +83,17 @@ export default {
     },
     computed: {
         matched() {
-            return this.list.filter(([name]) => name[this.searchMethod](this.search))
+            const matched =
+                this.searchMethod === 'includes'
+                    ? this.list.filter(
+                          ([name, id]) =>
+                              name[this.searchMethod](this.search) || id.toString()[this.searchMethod](this.search),
+                      )
+                    : this.list.filter(([name]) => name[this.searchMethod](this.search))
+            if (matched.length === 0) {
+                this.$emit('nomatch', this.search)
+            }
+            return matched
         },
     },
 }
@@ -87,7 +103,7 @@ export default {
 .root {
     position: absolute;
     min-width: 200px;
-    bottom: 50px;
+    bottom: 55px;
     padding: 5px;
     border-radius: 8px;
     background: var(--chat-message-bg-color-me);
@@ -106,7 +122,7 @@ ul {
     padding-left: 0;
     margin: 8px 0 2px 0;
     list-style-type: none;
-    max-height: 390px;
+    max-height: calc(100vh - 250px);
     overflow-y: scroll;
 }
 li {
@@ -115,6 +131,8 @@ li {
     min-height: 26px;
     padding: 2px 8px;
     border-radius: 3px;
+    align-items: center;
+    line-height: 100%;
 }
 li.selected,
 li:hover {

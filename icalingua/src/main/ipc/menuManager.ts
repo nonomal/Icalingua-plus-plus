@@ -1,65 +1,63 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, screen, shell } from 'electron'
+import Message from '@icalingua/types/Message'
+import OnlineStatusType from '@icalingua/types/OnlineStatusType'
+import Room from '@icalingua/types/Room'
+import SearchableGroup from '@icalingua/types/SearchableGroup'
+import axios from 'axios'
+import { app, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, screen, shell } from 'electron'
+import fs from 'fs'
+import path from 'path'
+import querystring from 'querystring'
+import getAvatarUrl from '../../utils/getAvatarUrl'
+import getImageUrlByMd5 from '../../utils/getImageUrlByMd5'
+import getStaticPath from '../../utils/getStaticPath'
+import getWinUrl from '../../utils/getWinUrl'
+import { newIcalinguaWindow } from '../../utils/IcalinguaWindow'
+import socketIoProvider from '../providers/socketIoProvider'
+import atCache from '../utils/atCache'
 import { getConfig, saveConfigFile } from '../utils/configManager'
 import exit from '../utils/exit'
+import exportContacts from '../utils/exportContacts'
+import exportGroupMembers from '../utils/exportGroupMembers'
+import gfsTokenManager from '../utils/gfsTokenManager'
+import isAdmin from '../utils/isAdmin'
+import openMedia from '../utils/openMedia'
+import setPriority from '../utils/setPriority'
+import * as themes from '../utils/themes'
+import ui from '../utils/ui'
+import version from '../utils/version'
 import { getMainWindow, showRequestWindow } from '../utils/windowManager'
-import openImage from './openImage'
-import path from 'path'
-import OnlineStatusType from '../../types/OnlineStatusType'
 import {
     deleteMessage,
     fetchHistory,
     fetchLatestHistory,
+    getCookies,
+    getGroupMemberInfo,
+    getMsgNewURL,
     getRoom,
     getSelectedRoom,
+    getUin,
+    hideMessage,
     ignoreChat,
+    makeForward,
     pinRoom,
     removeChat,
-    revealMessage,
     renewMessageURL,
+    requestGfsToken,
+    revealMessage,
     sendMessage,
+    setOnlineStatus as setStatus,
     setRoomAutoDownload,
     setRoomAutoDownloadPath,
     setRoomPriority,
-    setOnlineStatus as setStatus,
-    getUin,
-    getCookies,
-    getGroupMemberInfo,
-    requestGfsToken,
-    getMsgNewURL,
-    makeForward,
 } from './botAndStorage'
-import Room from '../../types/Room'
 import { download, downloadFileByMessageData, downloadImage } from './downloadManager'
-import Message from '../../types/Message'
-import axios from 'axios'
-import ui from '../utils/ui'
-import getStaticPath from '../../utils/getStaticPath'
-import setPriority from '../utils/setPriority'
-import getWinUrl from '../../utils/getWinUrl'
-import openMedia from '../utils/openMedia'
-import getImageUrlByMd5 from '../../utils/getImageUrlByMd5'
-import getAvatarUrl from '../../utils/getAvatarUrl'
-import fs from 'fs'
-import atCache from '../utils/atCache'
-import exportContacts from '../utils/exportContacts'
-import querystring from 'querystring'
-import exportGroupMembers from '../utils/exportGroupMembers'
-import isAdmin from '../utils/isAdmin'
-import SearchableGroup from '../../types/SearchableGroup'
-import * as themes from '../utils/themes'
-import version from '../utils/version'
-import gfsTokenManager from '../utils/gfsTokenManager'
-import socketIoProvider from '../providers/socketIoProvider'
-import { newIcalinguaWindow } from '../../utils/IcalinguaWindow'
+import openImage from './openImage'
 
 const setOnlineStatus = (status: OnlineStatusType) => {
     setStatus(status)
-        .then(() => {
-            getConfig().account.onlineStatus = status
-            updateAppMenu()
-            saveConfigFile()
-        })
-        .catch((res) => console.log(res))
+    getConfig().account.onlineStatus = status
+    updateAppMenu()
+    saveConfigFile()
 }
 const setKeyToSendMessage = (key: 'Enter' | 'CtrlEnter' | 'ShiftEnter') => {
     getConfig().keyToSendMessage = key
@@ -68,13 +66,21 @@ const setKeyToSendMessage = (key: 'Enter' | 'CtrlEnter' | 'ShiftEnter') => {
     updateAppMenu()
 }
 
-Menu.setApplicationMenu(
-    Menu.buildFromTemplate([
+{
+    const initMenu = Menu.buildFromTemplate([
         {
-            role: 'toggleDevTools',
+            label: 'Icalingua++',
+            submenu: [{ role: 'toggleDevTools' }],
         },
-    ]),
-)
+    ])
+    process.platform === 'darwin' &&
+        initMenu.append(
+            new MenuItem({
+                role: 'editMenu',
+            }),
+        )
+    Menu.setApplicationMenu(initMenu)
+}
 
 const buildRoomMenu = (room: Room): Menu => {
     const pinTitle = room.index ? '解除置顶' : '置顶'
@@ -588,10 +594,14 @@ export const updateAppMenu = async () => {
                 role: 'toggleDevTools',
             }),
             new MenuItem({
+                label: '关闭窗口',
+                role: 'close',
+            }),
+            new MenuItem({
                 label: '退出',
                 click: exit,
             }),
-        ],
+        ] as (Electron.MenuItem | Electron.MenuItemConstructorOptions)[],
         priority: new MenuItem({
             label: '通知优先级',
             submenu: [
@@ -741,11 +751,31 @@ export const updateAppMenu = async () => {
                 },
             }),
             new MenuItem({
+                label: '启动时自动获取历史消息',
+                type: 'checkbox',
+                checked: getConfig().fetchHistoryOnStart,
+                visible: getConfig().adapter === 'oicq', // Bridge is enabled by default
+                click: (menuItem) => {
+                    getConfig().fetchHistoryOnStart = menuItem.checked
+                    saveConfigFile()
+                },
+            }),
+            new MenuItem({
                 label: '启动时检查更新',
                 type: 'checkbox',
                 checked: getConfig().updateCheck === true,
                 click: (menuItem) => {
                     getConfig().updateCheck = menuItem.checked
+                    saveConfigFile()
+                },
+            }),
+            new MenuItem({
+                label: '启用插件',
+                type: 'checkbox',
+                checked: getConfig().custom === true,
+                visible: getConfig().adapter === 'oicq', // TODO: 修改 Bridge 的配置
+                click: (menuItem) => {
+                    getConfig().custom = menuItem.checked
                     saveConfigFile()
                 },
             }),
@@ -767,10 +797,21 @@ export const updateAppMenu = async () => {
                 label: '以匿名方式发送群消息（未完善，慎用）',
                 type: 'checkbox',
                 checked: getConfig().anonymous === true,
-                visible: getConfig().debugmode === true,
+                visible: getConfig().debugmode === true && getConfig().sendRawMessage === false,
                 click: (menuItem) => {
                     getConfig().anonymous = menuItem.checked
                     saveConfigFile()
+                },
+            }),
+            new MenuItem({
+                label: 'Send raw message',
+                type: 'checkbox',
+                checked: getConfig().sendRawMessage === true,
+                visible: getConfig().debugmode === true,
+                click: (menuItem) => {
+                    getConfig().sendRawMessage = menuItem.checked
+                    saveConfigFile()
+                    updateAppMenu()
                 },
             }),
             new MenuItem({
@@ -831,17 +872,22 @@ export const updateAppMenu = async () => {
                 }),
         ),
     }
-    const menu = Menu.buildFromTemplate([
+    let template = [
         {
             label: 'Icalingua++',
             submenu: Menu.buildFromTemplate(globalMenu.app),
         },
-        globalMenu.priority,
-        {
-            label: '选项',
-            submenu: Menu.buildFromTemplate(globalMenu.options),
-        },
-    ])
+    ] as (Electron.MenuItem | Electron.MenuItemConstructorOptions)[]
+    process.platform === 'darwin' &&
+        template.push({
+            role: 'editMenu',
+        })
+    template.push(globalMenu.priority)
+    template.push({
+        label: '选项',
+        submenu: Menu.buildFromTemplate(globalMenu.options),
+    })
+    const menu = Menu.buildFromTemplate(template)
     if (globalMenu.shortcuts.length) {
         menu.append(
             new MenuItem({
@@ -868,7 +914,7 @@ ipcMain.on('popupRoomMenu', async (_, roomId: number) => {
 })
 ipcMain.on('popupMessageMenu', async (_, room: Room, message: Message, sect?: string, history?: boolean) => {
     const menu = new Menu()
-    if (message.deleted && !message.reveal)
+    if ((message.deleted || message.hide) && !message.reveal)
         menu.append(
             new MenuItem({
                 label: '显示',
@@ -1028,8 +1074,22 @@ ipcMain.on('popupMessageMenu', async (_, room: Room, message: Message, sect?: st
                     )
                     menu.append(
                         new MenuItem({
-                            label: '添加为表情',
+                            label: '添加为默认表情',
                             type: 'normal',
+                            click: () => {
+                                download(
+                                    file.url,
+                                    String(new Date().getTime()),
+                                    path.join(app.getPath('userData'), 'stickers'),
+                                )
+                            },
+                        }),
+                    )
+                    menu.append(
+                        new MenuItem({
+                            label: '添加为分类表情',
+                            type: 'normal',
+                            visible: false, // TODO
                             click: () => {
                                 download(
                                     file.url,
@@ -1192,12 +1252,21 @@ ipcMain.on('popupMessageMenu', async (_, room: Room, message: Message, sect?: st
                     label: '多选',
                     type: 'normal',
                     click: () => {
-                        ui.startForward()
+                        ui.startForward(message._id as string)
                     },
                 }),
             )
         }
-
+        if (!history) {
+            menu.append(
+                new MenuItem({
+                    label: '隐藏',
+                    click: () => {
+                        hideMessage(room.roomId, message._id as string)
+                    },
+                }),
+            )
+        }
         if (!history && !message.flash) {
             menu.append(
                 new MenuItem({
@@ -1212,11 +1281,15 @@ ipcMain.on('popupMessageMenu', async (_, room: Room, message: Message, sect?: st
                     new MenuItem({
                         label: '+1',
                         click: () => {
+                            let messageType
+                            if (getConfig().anonymous) messageType = 'anonymous'
+                            if (getConfig().sendRawMessage || !getConfig().debugmode) messageType = undefined
                             const msgToSend = {
                                 content: message.content,
                                 replyMessage: message.replyMessage,
                                 imgpath: undefined,
                                 at: [],
+                                messageType,
                             }
                             if (message.file) {
                                 msgToSend.imgpath = message.file.url
@@ -1274,6 +1347,18 @@ ipcMain.on('popupStickerMenu', () => {
             },
         },
         {
+            label: 'Send shake',
+            type: 'normal',
+            click() {
+                sendMessage({
+                    content: '[窗口抖动]',
+                    at: [],
+                    messageType: 'shake',
+                })
+                ui.closePanel()
+            },
+        },
+        {
             label: 'Close panel',
             type: 'normal',
             click: ui.closePanel,
@@ -1291,6 +1376,13 @@ ipcMain.on('popupStickerItemMenu', (_, itemName: string) => {
             },
         })
     } else {
+        menu.push({
+            label: '以图片方式发送',
+            type: 'normal',
+            click() {
+                ui.pasteGif(itemName)
+            },
+        })
         menu.push({
             label: '移动到分类',
             type: 'normal',

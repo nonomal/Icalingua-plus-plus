@@ -1,13 +1,42 @@
-import SendMessageParams from '../../types/SendMessageParams'
+import MongoStorageProvider from '@icalingua/storage-providers/MongoStorageProvider'
+import RedisStorageProvider from '@icalingua/storage-providers/RedisStorageProvider'
+import SQLStorageProvider from '@icalingua/storage-providers/SQLStorageProvider'
+import Adapter, { CookiesDomain } from '@icalingua/types/Adapter'
+import BilibiliMiniApp from '@icalingua/types/BilibiliMiniApp'
+import IgnoreChatInfo from '@icalingua/types/IgnoreChatInfo'
+import LoginForm from '@icalingua/types/LoginForm'
+import Message from '@icalingua/types/Message'
+import RoamingStamp from '@icalingua/types/RoamingStamp'
+import Room from '@icalingua/types/Room'
+import SearchableFriend from '@icalingua/types/SearchableFriend'
+import SendMessageParams from '@icalingua/types/SendMessageParams'
+import StorageProvider from '@icalingua/types/StorageProvider'
+import StructMessageCard from '@icalingua/types/StructMessageCard'
+import { app, dialog, Notification as ElectronNotification } from 'electron'
+import { Notification } from 'freedesktop-notifications'
+import fs from 'fs'
+import { base64decode } from 'nodejs-base64'
 import {
     Client,
     createClient,
+    FakeMessage,
+    FriendAddEventData,
+    FriendDecreaseEventData,
+    FriendIncreaseEventData,
     FriendInfo,
     FriendPokeEventData,
     FriendRecallEventData,
+    Gfs,
+    GroupAddEventData,
+    GroupAdminEventData,
+    GroupInfo,
+    GroupInviteEventData,
     GroupMessageEventData,
+    GroupMuteEventData,
     GroupPokeEventData,
     GroupRecallEventData,
+    GroupSettingEventData,
+    GroupTransferEventData,
     MemberBaseInfo,
     MemberDecreaseEventData,
     MemberIncreaseEventData,
@@ -16,73 +45,56 @@ import {
     MessageEventData,
     OfflineEventData,
     PrivateMessageEventData,
-    FriendAddEventData,
-    Ret,
-    GroupAddEventData,
-    GroupInviteEventData,
-    SyncReadedEventData,
-    FriendIncreaseEventData,
-    FriendDecreaseEventData,
-    SyncMessageEventData,
-    GroupMuteEventData,
-    GroupSettingEventData,
-    GroupAdminEventData,
-    GroupTransferEventData,
     QrcodeEventData,
-    GroupInfo,
-    Gfs,
-    FakeMessage,
+    Ret,
+    SyncMessageEventData,
+    SyncReadedEventData,
 } from 'oicq-icalingua-plus-plus'
-import StorageProvider from '../../types/StorageProvider'
-import LoginForm from '../../types/LoginForm'
-import getAvatarUrl from '../../utils/getAvatarUrl'
-import Message from '../../types/Message'
-import formatDate from '../../utils/formatDate'
-import createRoom from '../../utils/createRoom'
-import processMessage from '../utils/processMessage'
-import { getMainWindow, loadMainWindow, sendToLoginWindow, showRequestWindow, showWindow } from '../utils/windowManager'
-import ui from '../utils/ui'
-import { getConfig, saveConfigFile } from '../utils/configManager'
-import { app, BrowserWindow, dialog, ipcMain, NativeImage, Notification as ElectronNotification } from 'electron'
-import avatarCache from '../utils/avatarCache'
-import { download } from '../ipc/downloadManager'
-import fs from 'fs'
 import path from 'path'
-import getStaticPath from '../../utils/getStaticPath'
-import { createTray, updateTrayIcon } from '../utils/trayManager'
-import { updateAppMenu } from '../ipc/menuManager'
-import MongoStorageProvider from '../../storageProviders/MongoStorageProvider'
-import Room from '../../types/Room'
-import IgnoreChatInfo from '../../types/IgnoreChatInfo'
-import Adapter, { CookiesDomain } from '../../types/Adapter'
-import RedisStorageProvider from '../../storageProviders/RedisStorageProvider'
-import SQLStorageProvider from '../../storageProviders/SQLStorageProvider'
-import RoamingStamp from '../../types/RoamingStamp'
-import SearchableFriend from '../../types/SearchableFriend'
-import errorHandler from '../utils/errorHandler'
-import { getUin } from '../ipc/botAndStorage'
-import { Notification } from 'freedesktop-notifications'
-import isInlineReplySupported from '../utils/isInlineReplySupported'
-import getBuildInfo from '../utils/getBuildInfo'
-import { checkUpdate, getCachedUpdate } from '../utils/updateChecker'
-import socketIoProvider from '../providers/socketIoProvider'
-import { newIcalinguaWindow } from '../../utils/IcalinguaWindow'
+import createRoom from '../../utils/createRoom'
+import formatDate from '../../utils/formatDate'
+import getAvatarUrl from '../../utils/getAvatarUrl'
 import getImageUrlByMd5 from '../../utils/getImageUrlByMd5'
-import { base64decode } from 'nodejs-base64'
-import BilibiliMiniApp from '../../types/BilibiliMiniApp'
-import StructMessageCard from '../../types/StructMessageCard'
+import getStaticPath from '../../utils/getStaticPath'
+import { newIcalinguaWindow } from '../../utils/IcalinguaWindow'
+import sleep from '../../utils/sleep'
+import { getUin } from '../ipc/botAndStorage'
+import { download } from '../ipc/downloadManager'
+import { updateAppMenu } from '../ipc/menuManager'
+import socketIoProvider from '../providers/socketIoProvider'
+import avatarCache from '../utils/avatarCache'
+import { getConfig, saveConfigFile } from '../utils/configManager'
+import errorHandler from '../utils/errorHandler'
+import getBuildInfo from '../utils/getBuildInfo'
+import isInlineReplySupported from '../utils/isInlineReplySupported'
+import processMessage from '../utils/processMessage'
+import { createTray, updateTrayIcon } from '../utils/trayManager'
+import ui from '../utils/ui'
+import { checkUpdate, getCachedUpdate } from '../utils/updateChecker'
+import { getMainWindow, loadMainWindow, sendToLoginWindow, showRequestWindow, showWindow } from '../utils/windowManager'
 
 let bot: Client
 let storage: StorageProvider
 let loginForm: LoginForm
+let loginError: boolean = false
 
 let currentLoadedMessagesCount = 0
 let loggedIn = false
 let stopFetching = false
 
+let auto_fetching = false
+let lastReceivedMessageInfo = {
+    timestamp: 0,
+    id: 0,
+}
+
 //region event handlers
 const eventHandlers = {
     async onQQMessage(data: MessageEventData | SyncMessageEventData) {
+        if (data.time !== lastReceivedMessageInfo.timestamp) {
+            lastReceivedMessageInfo.timestamp = data.time
+            lastReceivedMessageInfo.id = 0
+        }
         const now = new Date(data.time * 1000)
         const groupId = (data as GroupMessageEventData).group_id
         const senderId = data.sender.user_id
@@ -163,9 +175,6 @@ const eventHandlers = {
             //notification
             if (process.platform === 'darwin' || process.platform === 'win32') {
                 if (!ElectronNotification.isSupported()) return
-                if (process.platform === 'win32') {
-                    app.setAppUserModelId(process.execPath)
-                }
                 const notif = new ElectronNotification({
                     title: room.roomName,
                     body: (groupId ? senderName + ': ' : '') + lastMessage.content,
@@ -249,29 +258,91 @@ const eventHandlers = {
         if (room.roomId === ui.getSelectedRoomId() && getMainWindow().isFocused()) {
             //当前处于此会话界面
             adapter.reportRead(data.message_id)
+            room.at = room.at && !isSelfMsg
         } else if (isSelfMsg) {
             room.unreadCount = 0
             room.at = false
         } else room.unreadCount++
-        room.utime = data.time * 1000
+        // 加上同一秒收到消息的id，防止消息乱序
+        room.utime = data.time * 1000 + lastReceivedMessageInfo.id
         room.lastMessage = lastMessage
         if (message.file && message.file.name && room.autoDownload) {
             download(message.file.url, message.file.name, room.downloadPath)
         }
-        message.time = data.time * 1000
+        message.time = data.time * 1000 + lastReceivedMessageInfo.id
+        lastReceivedMessageInfo.id++
         ui.addMessage(room.roomId, message)
         ui.updateRoom(room)
         storage.addMessage(roomId, message)
         await storage.updateRoom(roomId, room)
         updateTrayIcon()
+        if (getConfig().custom) {
+            let custom_bot = Object.assign({}, bot)
+            const sendPrivateMsg = async (user_id: number, message, auto_escape?: boolean) => {
+                let custom_room = await storage.getRoom(user_id)
+                if (typeof message === 'string') message = [{ type: 'text', data: { text: message } }]
+                const _message: Message = {
+                    _id: '',
+                    senderId: bot.uin,
+                    username: 'You',
+                    content: '',
+                    timestamp: formatDate('hh:mm'),
+                    date: formatDate('yyyy/MM/dd'),
+                    files: [],
+                }
+                let data = await bot.sendPrivateMsg(user_id, message, auto_escape)
+                await processMessage(message, _message, {}, user_id)
+                custom_room.lastMessage = {
+                    content: _message.content,
+                    timestamp: formatDate('hh:mm'),
+                }
+                if (user_id === bot.uin) return data
+                _message._id = data.data.message_id
+                custom_room.utime = new Date().getTime()
+                _message.time = new Date().getTime()
+                ui.updateRoom(custom_room)
+                ui.addMessage(custom_room.roomId, _message)
+                storage.addMessage(user_id, _message)
+                storage.updateRoom(custom_room.roomId, {
+                    utime: custom_room.utime,
+                    lastMessage: custom_room.lastMessage,
+                })
+                return data
+            }
+            custom_bot.sendGroupMsg = async (group_id, message, auto_escape?) => {
+                return await bot.sendGroupMsg(group_id, message, auto_escape)
+            }
+            custom_bot.sendPrivateMsg = sendPrivateMsg
+            custom_bot.makeForwardMsg = async (fake, dm?, target?) => {
+                return await bot.makeForwardMsg(fake, dm, target)
+            }
+            custom_bot.deleteMsg = async (message_id) => {
+                return await bot.deleteMsg(message_id)
+            }
+            custom_bot.setGroupBan = async (group_id, user_id, duration?) => {
+                return await bot.setGroupBan(group_id, user_id, duration)
+            }
+            custom_bot.setGroupAnonymousBan = async (group_id, flag, duration?) => {
+                return await bot.setGroupAnonymousBan(group_id, flag, duration)
+            }
+            custom_bot.setGroupWholeBan = async (group_id, enable?) => {
+                return await bot.setGroupWholeBan(group_id, enable)
+            }
+            custom_bot.setGroupKick = async (group_id, user_id, reject_add_request?) => {
+                return await bot.setGroupKick(group_id, user_id, reject_add_request)
+            }
+            const custom_path = path.join(app.getPath('userData'), 'custom')
+            const requireFunc = eval('require')
+            requireFunc(custom_path).onMessage(data, custom_bot)
+        }
     },
     friendRecall(data: FriendRecallEventData) {
         ui.deleteMessage(data.message_id)
-        storage.updateMessage(data.user_id, data.message_id, { deleted: true })
+        storage.updateMessage(data.user_id, data.message_id, { deleted: true, reveal: false })
     },
     groupRecall(data: GroupRecallEventData) {
         ui.deleteMessage(data.message_id)
-        storage.updateMessage(-data.group_id, data.message_id, { deleted: true })
+        storage.updateMessage(-data.group_id, data.message_id, { deleted: true, reveal: false })
     },
     online() {
         ui.setOnline()
@@ -745,6 +816,7 @@ const loginHandlers = {
     onErr(data) {
         console.log(data)
         sendToLoginWindow('error', data.message)
+        loginError = true
     },
     async onSucceed() {
         if (!loggedIn) {
@@ -765,6 +837,28 @@ const loginHandlers = {
         }
         await updateAppMenu()
         await updateTrayIcon()
+        if (!getConfig().fetchHistoryOnStart) return
+        await sleep(3000)
+        auto_fetching = true
+        ui.message('正在获取历史消息')
+        {
+            const rooms = await storage.getAllRooms()
+            for (const i of rooms) {
+                if (new Date().getTime() - i.utime > 1000 * 60 * 60 * 24 * 2) return
+                const roomId = i.roomId
+                let buffer: Buffer
+                let uid = roomId
+                if (roomId < 0) {
+                    buffer = Buffer.alloc(21)
+                    uid = -uid
+                } else buffer = Buffer.alloc(17)
+                buffer.writeUInt32BE(uid, 0)
+                adapter.fetchHistory(buffer.toString('base64'), roomId)
+                await sleep(500)
+            }
+        }
+        auto_fetching = false
+        ui.messageSuccess('历史消息获取完成')
     },
     verify(data) {
         const veriWin = newIcalinguaWindow({
@@ -949,18 +1043,32 @@ const adapter: OicqAdapter = {
     setGroupAnonymousBan(gin: number, flag: string, duration?: number): any {
         bot.setGroupAnonymousBan(gin, flag, duration)
     },
-    async makeForward(fakes: FakeMessage | Iterable<FakeMessage>, dm?: boolean, target?: number): Promise<any> {
-        const xmlret = await bot.makeForwardMsg(fakes, dm, target)
+    async makeForward(
+        fakes: FakeMessage | Iterable<FakeMessage>,
+        dm?: boolean,
+        origin?: number,
+        target?: number,
+    ): Promise<any> {
+        const xmlret = await bot.makeForwardMsg(fakes, dm, origin)
         if (xmlret.error) {
             errorHandler(xmlret.error, true)
             ui.messageError('错误：' + xmlret.error.message)
             return
         }
-        ui.addMessageText(xmlret.data.data.data)
-        ui.notify({
-            title: '生成转发成功',
-            message: '已在消息输入框中生成转发消息的 XML 对象，请使用鼠标中键单击发送按钮以发送此条转发消息。',
-        })
+        if (!target) {
+            ui.addMessageText(xmlret.data.data.data)
+            ui.notify({
+                title: '生成转发成功',
+                message: '已在消息输入框中生成转发消息的 XML 对象，请使用鼠标中键单击发送按钮以发送此条转发消息。',
+            })
+        } else {
+            adapter.sendMessage({
+                content: xmlret.data.data.data,
+                at: [],
+                roomId: target,
+                messageType: 'xml',
+            })
+        }
     },
     reportRead(messageId: string): any {
         bot.reportReaded(messageId)
@@ -1080,13 +1188,15 @@ const adapter: OicqAdapter = {
 
         const chain: MessageElem[] = []
 
-        if (getConfig().anonymous === true && getConfig().debugmode === true && roomId < 0) {
-            chain.push({
-                type: 'anonymous',
-                data: {
-                    ignore: false, //匿名失败时不继续发送
-                },
-            })
+        if (messageType === 'anonymous') {
+            if (roomId < 0)
+                chain.push({
+                    type: 'anonymous',
+                    data: {
+                        ignore: false, //匿名失败时不继续发送
+                    },
+                })
+            messageType = 'text'
         }
 
         if (replyMessage) {
@@ -1210,6 +1320,18 @@ const adapter: OicqAdapter = {
                             id: parseInt(content),
                         },
                     })
+                    break
+                } else if (messageType === 'shake') {
+                    chain.length = 0
+                    chain.push({
+                        type: 'shake',
+                    })
+                    break
+                } else if (messageType === 'raw') {
+                    // Only for debug
+                    chain.length = 0
+                    const rawMessage = JSON.parse(content)
+                    chain.push(...rawMessage)
                     break
                 }
                 chain.push(element)
@@ -1368,6 +1490,10 @@ const adapter: OicqAdapter = {
             } else if (messageType === 'dice') {
                 room.lastMessage.content = '[随机骰子]'
                 message.content = '[随机骰子]点数' + content
+            } else if (messageType === 'raw') {
+                message.content = ''
+                await processMessage(chain, message, {}, roomId)
+                room.lastMessage.content = '[DEBUG]' + message.content
             }
             message._id = data.data.message_id
             room.utime = new Date().getTime()
@@ -1382,7 +1508,8 @@ const adapter: OicqAdapter = {
         }
     },
     createBot(form: LoginForm) {
-        if (!bot || form.username != bot.uin) {
+        if (!bot || form.username != bot.uin || loginError) {
+            loginError = false
             bot = createClient(Number(form.username), {
                 platform: Number(form.protocol),
                 data_dir: path.join(app.getPath('userData'), '/data'),
@@ -1527,7 +1654,7 @@ const adapter: OicqAdapter = {
         console.log(res)
         if (!res.error) {
             ui.deleteMessage(messageId)
-            await storage.updateMessage(roomId, messageId, { deleted: true })
+            await storage.updateMessage(roomId, messageId, { deleted: true, reveal: false })
         } else {
             ui.notifyError({
                 title: 'Failed to delete message',
@@ -1535,22 +1662,27 @@ const adapter: OicqAdapter = {
             })
         }
     },
+    async hideMessage(roomId: number, messageId: string) {
+        ui.hideMessage(messageId)
+        await storage.updateMessage(roomId, messageId, { hide: true, reveal: false })
+    },
     async revealMessage(roomId: number, messageId: string | number) {
         ui.revealMessage(messageId)
-        await storage.updateMessage(roomId, messageId, { reveal: true })
+        await storage.updateMessage(roomId, messageId, { hide: false, reveal: true })
     },
     async renewMessageURL(roomId: number, messageId: string | number, URL) {
         ui.renewMessageURL(messageId, URL)
-        //await storage.updateURL(roomId, messageId, {file: JSON.stringify({ type: 'video/mp4', url: URL })})
     },
     stopFetchingHistory() {
         stopFetching = true
     },
     async fetchHistory(messageId: string, roomId: number = ui.getSelectedRoomId()) {
         let lastMessage = {}
+        let lastMessageTime = 0
         const fetchLoop = async (limit?: number) => {
             const messages = []
             let done = false
+            let first_loop = true
             while (true) {
                 if (stopFetching) {
                     stopFetching = false
@@ -1600,13 +1732,17 @@ const adapter: OicqAdapter = {
                         messages.push(message)
                         newMsgs.push(message)
                         console.log(retData)
-                        lastMessage = Object.assign(retData.message, retData.lastMessage, {
-                            username: getUin() == retData.message.senderId ? 'You' : retData.message.username,
-                        })
+                        if (first_loop) {
+                            lastMessage = Object.assign(retData.message, retData.lastMessage, {
+                                username: getUin() == retData.message.senderId ? 'You' : retData.message.username,
+                            })
+                            lastMessageTime = retData.message.time
+                        }
                     } catch (e) {
                         errorHandler(e, true)
                     }
                 }
+                first_loop = false
                 ui.addHistoryCount(newMsgs.length)
                 if (history.data.length < 2) {
                     done = true
@@ -1644,6 +1780,7 @@ const adapter: OicqAdapter = {
 
         // 更新最近消息
         if (!messages.length) return
+        if (auto_fetching) return // 如果是启动时自动拉取，则不更新最近消息
         let room = await storage.getRoom(roomId)
         room.lastMessage = lastMessage
         ui.updateRoom(room)

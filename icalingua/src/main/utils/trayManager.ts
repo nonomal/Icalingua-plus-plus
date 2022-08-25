@@ -1,21 +1,21 @@
-import { app, Menu, MenuItem, Tray, nativeImage } from 'electron'
+import Room from '@icalingua/types/Room'
+import { app, Menu, MenuItem, nativeImage, Tray } from 'electron'
 import path from 'path'
-import { getMainWindow } from './windowManager'
-import exit from './exit'
+import getStaticPath from '../../utils/getStaticPath'
 import {
-    getUin,
-    getNickname,
+    clearRoomUnread,
     getFirstUnreadRoom,
+    getNickname,
+    getUin,
     getUnreadCount,
     getUnreadRooms,
-    clearRoomUnread,
 } from '../ipc/botAndStorage'
 import { getConfig, saveConfigFile } from './configManager'
-import getStaticPath from '../../utils/getStaticPath'
-import { pushUnreadCount } from './socketIoSlave'
+import exit from './exit'
 import setPriority from './setPriority'
+import { pushUnreadCount } from './socketIoSlave'
 import ui from './ui'
-import Room from '../../types/Room'
+import { getMainWindow } from './windowManager'
 
 let tray: Tray
 
@@ -24,15 +24,8 @@ let newmsgIcon = nativeImage.createFromPath(path.join(getStaticPath(), 'newmsg.p
 let darkIcon = nativeImage.createFromPath(path.join(getStaticPath(), 'dark.png'))
 let lightIcon = nativeImage.createFromPath(path.join(getStaticPath(), '256x256.png'))
 
-if (process.platform === 'darwin') {
-    darknewmsgIcon = darknewmsgIcon.resize({ width: 22, height: 22 })
-    newmsgIcon = newmsgIcon.resize({ width: 22, height: 22 })
-    darkIcon = darkIcon.resize({ width: 22, height: 22 })
-    lightIcon = lightIcon.resize({ width: 22, height: 22 })
-}
-
 export const createTray = () => {
-    tray = new Tray(getConfig().darkTaskIcon ? darknewmsgIcon : newmsgIcon)
+    tray = new Tray(path.join(getStaticPath(), 'trayTemplate.png'))
     tray.setToolTip(`Icalingua++: ${getNickname()} (${getUin()})\n通知优先级: ${getConfig().priority.toString()}`)
     tray.on('click', () => {
         const window = getMainWindow()
@@ -130,18 +123,19 @@ export const updateTrayMenu = async () => {
             ],
         }),
     )
-    menu.append(
-        new MenuItem({
-            label: '深色图标',
-            type: 'checkbox',
-            checked: getConfig().darkTaskIcon,
-            click(item) {
-                getConfig().darkTaskIcon = item.checked
-                updateTrayIcon()
-                saveConfigFile()
-            },
-        }),
-    )
+    process.platform !== 'darwin' &&
+        menu.append(
+            new MenuItem({
+                label: '深色图标',
+                type: 'checkbox',
+                checked: getConfig().darkTaskIcon,
+                click(item) {
+                    getConfig().darkTaskIcon = item.checked
+                    updateTrayIcon()
+                    saveConfigFile()
+                },
+            }),
+        )
     menu.append(
         new MenuItem({
             label: '退出',
@@ -164,7 +158,8 @@ export const updateTrayIcon = async () => {
         p = getConfig().darkTaskIcon ? darkIcon : lightIcon
         getMainWindow().title = title
     }
-    tray.setImage(p)
+    tray.setTitle(unread === 0 ? '' : `${unread}`)
+    process.platform !== 'darwin' && tray.setImage(p)
     app.setBadgeCount(unread)
     pushUnreadCount(unread)
     updateTrayMenu()

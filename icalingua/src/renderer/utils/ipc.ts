@@ -1,12 +1,12 @@
+import Aria2Config from '@icalingua/types/Aria2Config'
+import AtCacheItem from '@icalingua/types/AtCacheElem'
+import IgnoreChatInfo from '@icalingua/types/IgnoreChatInfo'
+import Message from '@icalingua/types/Message'
+import RoamingStamp from '@icalingua/types/RoamingStamp'
+import Room from '@icalingua/types/Room'
+import SearchableGroup from '@icalingua/types/SearchableGroup'
 import { ipcRenderer } from 'electron'
-import Room from '../../types/Room'
-import Message from '../../types/Message'
-import Aria2Config from '../../types/Aria2Config'
-import IgnoreChatInfo from '../../types/IgnoreChatInfo'
-import RoamingStamp from '../../types/RoamingStamp'
-import SearchableGroup from '../../types/SearchableGroup'
-import { FakeMessage, GroupInfo } from 'oicq-icalingua-plus-plus'
-import AtCacheItem from '../../types/AtCacheElem'
+import { FakeMessage, MemberInfo } from 'oicq-icalingua-plus-plus'
 
 const ipc = {
     sendMessage(data) {
@@ -24,8 +24,14 @@ const ipc = {
     async getlinkifySetting(): Promise<boolean> {
         return await ipcRenderer.invoke('getlinkifySetting')
     },
-    async getRoomPanelSetting(): Promise<{ roomPanelAvatarOnly: boolean, roomPanelWidth: number }> {
+    async getDebugSetting(): Promise<boolean> {
+        return await ipcRenderer.invoke('getDebugSetting')
+    },
+    async getRoomPanelSetting(): Promise<{ roomPanelAvatarOnly: boolean; roomPanelWidth: number }> {
         return await ipcRenderer.invoke('getRoomPanelSetting')
+    },
+    async getMessgeTypeSetting(): Promise<string> {
+        return (await ipcRenderer.invoke('getMessgeTypeSetting')) || 'text'
     },
     setRoomPanelSetting(roomPanelAvatarOnly: boolean, roomPanelWidth: number) {
         ipcRenderer.send('setRoomPanelSetting', roomPanelAvatarOnly, roomPanelWidth)
@@ -55,8 +61,8 @@ const ipc = {
         return await ipcRenderer.invoke('getPriority')
     },
     //todo 这俩玩意要封装的更细的说
-    async updateRoom(roomId: number, room: object) {
-        return await ipcRenderer.invoke('updateRoom', roomId, room)
+    updateRoom(roomId: number, room: object) {
+        ipcRenderer.send('updateRoom', roomId, room)
     },
     async updateMessage(roomId: number, messageId: string, message: object) {
         return await ipcRenderer.invoke('updateMessage', roomId, messageId, message)
@@ -115,8 +121,8 @@ const ipc = {
     openForward(resId: string) {
         ipcRenderer.send('openForward', resId)
     },
-    makeForward(fakes: FakeMessage | Iterable<FakeMessage>, dm?: boolean, target?: number) {
-        ipcRenderer.send('makeForward', fakes, dm, target)
+    makeForward(fakes: FakeMessage | Iterable<FakeMessage>, dm?: boolean, origin?: number, target?: number) {
+        ipcRenderer.send('makeForward', fakes, dm, origin, target)
     },
     setAria2Config(config: Aria2Config) {
         ipcRenderer.send('setAria2Config', config)
@@ -166,7 +172,7 @@ const ipc = {
     async getGroup(gin: number): Promise<SearchableGroup> {
         return await ipcRenderer.invoke('getGroup', gin)
     },
-    async getGroupMembers(gin: number): Promise<GroupInfo> {
+    async getGroupMembers(gin: number): Promise<MemberInfo[]> {
         return await ipcRenderer.invoke('getGroupMembers', gin)
     },
     async pushAtCache(at: AtCacheItem): Promise<number> {

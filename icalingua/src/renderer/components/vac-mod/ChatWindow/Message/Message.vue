@@ -17,15 +17,9 @@
             :id="message._id"
             class="vac-message-box"
             :class="{ 'vac-offset-current': message.senderId === currentUserId }"
+            @click="selectMessage"
         >
             <slot name="message" v-bind="{ message }">
-                <el-checkbox
-                    id="message._id"
-                    value="message._id"
-                    v-model="checkbox"
-                    v-if="showForwardPanel"
-                    v-on:change="checkboxChange"
-                />
                 <div
                     class="vac-message-sender-avatar"
                     @click.right="$emit('avatar-ctx')"
@@ -57,7 +51,9 @@
                         :class="{
                             'vac-message-highlight': isMessageHover,
                             'vac-message-current': message.senderId === currentUserId,
-                            'vac-message-deleted': message.deleted,
+                            'vac-message-deleted': message.deleted || message.hide,
+                            'vac-message-clickable': showForwardPanel,
+                            'vac-message-selected': selected,
                         }"
                         @mouseover="onHoverMessage"
                         @mouseleave="onLeaveMessage"
@@ -66,7 +62,7 @@
                             v-if="roomUsers.length > 2 && message.senderId !== currentUserId"
                             class="vac-text-username"
                             :class="{
-                                'vac-username-reply': (!message.deleted || message.reveal) && message.replyMessage,
+                                'vac-username-reply': ((!message.deleted && !message.hide) || message.reveal) && message.replyMessage,
                             }"
                             style="display: flex"
                         >
@@ -90,10 +86,11 @@
                         </div>
 
                         <message-reply
-                            v-if="(!message.deleted || message.reveal) && message.replyMessage"
+                            v-if="((!message.deleted && !message.hide) || message.reveal) && message.replyMessage"
                             :message="message"
                             :room-users="roomUsers"
                             :linkify="linkify"
+                            :showForwardPanel="showForwardPanel"
                             @open-forward="$emit('open-forward', $event)"
                         />
 
@@ -102,6 +99,13 @@
                                 <svg-icon name="deleted" class="vac-icon-deleted" />
                             </slot>
                             <span>{{ textMessages.MESSAGE_DELETED }}</span>
+                        </div>
+
+                        <div v-else-if="message.hide && !message.reveal && !message.deleted">
+                            <slot name="deleted-icon">
+                                <svg-icon name="hide" class="vac-icon-hide" />
+                            </slot>
+                            <span>{{ textMessages.MESSAGE_HIDE }}</span>
                         </div>
 
                         <LottieAnimation v-else-if="lottie" :path="lottie" :height="250" :width="250" />
@@ -117,6 +121,7 @@
                             :room-users="roomUsers"
                             :text-formatting="textFormatting"
                             :image-hover="imageHover"
+                            :showForwardPanel="showForwardPanel"
                             @open-file="openFile"
                         >
                             <template v-for="(i, name) in $scopedSlots" #[name]="data">
@@ -133,6 +138,7 @@
                             :room-users="roomUsers"
                             :text-formatting="textFormatting"
                             :image-hover="imageHover"
+                            :showForwardPanel="showForwardPanel"
                             @open-file="openFile"
                         >
                             <template v-for="(i, name) in $scopedSlots" #[name]="data">
@@ -163,12 +169,12 @@
                         </div>
 
                         <format-message
-                            v-if="!message.deleted || message.reveal"
+                            v-if="(!message.deleted && !message.hide) || message.reveal"
                             :content="message.content"
                             :users="roomUsers"
                             :text-formatting="textFormatting"
                             :linkify="linkify"
-                            @open-user-tag="openUserTag"
+                            :showForwardPanel="showForwardPanel"
                             @open-forward="$emit('open-forward', $event)"
                         >
                             <template #deleted-icon="data">
@@ -196,6 +202,7 @@ import MessageImage from './MessageImage'
 import getLottieFace from '../../../../utils/getLottieFace'
 
 const { isImageFile } = require('../../utils/mediaFile')
+const { messagesValid } = require('../../utils/roomValidation')
 
 import LottieAnimation from '../../../LottieAnimation'
 import ipc from '../../../../utils/ipc'
@@ -214,7 +221,7 @@ export default {
 
     data() {
         return {
-            checkbox: false,
+            selected: false,
         }
     },
 
@@ -232,8 +239,8 @@ export default {
         showNewMessagesDivider: { type: Boolean, required: true },
         textFormatting: { type: Boolean, required: true },
         emojisList: { type: Object, required: true },
-        hideOptions: { type: Boolean, required: true },
         showForwardPanel: { type: Boolean, required: true },
+        selectedMessage: { type: String, required: true },
         linkify: { type: Boolean, default: true },
     },
 
@@ -295,7 +302,9 @@ export default {
         showForwardPanel: {
             handler(newValue) {
                 if (!newValue) {
-                    this.checkbox = false
+                    this.selected = false
+                } else if (this.message._id === this.selectedMessage) {
+                    this.selected = true
                 }
             },
             immediate: true,
@@ -303,6 +312,11 @@ export default {
     },
 
     mounted() {
+        if (!messagesValid(this.message)) {
+            throw new Error(
+                'Messages object is not valid! Must contain _id[String, Number], content[String, Number] and senderId[String, Number]',
+            )
+        }
         if (!this.message.seen && this.message.senderId !== this.currentUserId) {
             this.$emit('add-new-message', {
                 _id: this.message._id,
@@ -312,9 +326,12 @@ export default {
     },
 
     methods: {
-        checkboxChange() {
-            console.log('checkboxChange', this.checkbox)
-            this.$emit(this.checkbox ? 'add-msg-to-forward' : 'del-msg-to-forward', this.message._id)
+        selectMessage(event) {
+            if (!this.showForwardPanel) return
+            this.selected = !this.selected
+            console.log('selectMessage', this.selected)
+            this.$emit(this.selected ? 'add-msg-to-forward' : 'del-msg-to-forward', this.message._id)
+            event.preventDefault()
         },
         onHoverMessage() {
             this.imageHover = true
@@ -330,10 +347,8 @@ export default {
             this.hoverMessageId = null
         },
         openFile(action) {
+            if (this.showForwardPanel) return
             this.$emit('open-file', { message: this.message, action })
-        },
-        openUserTag(user) {
-            this.$emit('open-user-tag', { user })
         },
         messageActionHandler(action) {
             this.messageHover = false
@@ -483,7 +498,24 @@ export default {
     background: var(--chat-message-bg-color-deleted) !important;
 }
 
+.vac-message-clickable {
+	cursor: pointer;
+}
+
+.vac-message-selected {
+	background-color: var(--chat-message-bg-color-selected) !important;
+	transition: background-color 0.2s;
+}
+
 .vac-icon-deleted {
+    height: 14px;
+    width: 14px;
+    vertical-align: middle;
+    margin: -2px 2px 0 0;
+    fill: var(--chat-message-color-deleted);
+}
+
+.vac-icon-hide {
     height: 14px;
     width: 14px;
     vertical-align: middle;

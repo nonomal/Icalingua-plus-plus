@@ -1,21 +1,20 @@
-import { BrowserWindow, ipcMain, screen } from 'electron'
-import LoginForm from '../../types/LoginForm'
-import { getConfig } from '../utils/configManager'
-import getWinUrl from '../../utils/getWinUrl'
-import oicqAdapter from '../adapters/oicqAdapter'
-import Adapter, { CookiesDomain } from '../../types/Adapter'
-import socketIoAdapter from '../adapters/socketIoAdapter'
+import Adapter, { CookiesDomain } from '@icalingua/types/Adapter'
+import AtCacheItem from '@icalingua/types/AtCacheElem'
+import Cookies from '@icalingua/types/cookies'
+import GroupOfFriend from '@icalingua/types/GroupOfFriend'
+import LoginForm from '@icalingua/types/LoginForm'
+import SearchableFriend from '@icalingua/types/SearchableFriend'
+import { ipcMain, screen, shell } from 'electron'
 import getCharCount from '../../utils/getCharCount'
-import Cookies from '../../types/cookies'
-import getFriends from '../utils/getFriends'
-import atCache from '../utils/atCache'
-import GroupOfFriend from '../../types/GroupOfFriend'
-import errorHandler from '../utils/errorHandler'
-import SearchableFriend from '../../types/SearchableFriend'
-import * as themes from '../utils/themes'
-import SearchableGroup from '../../types/SearchableGroup'
+import getWinUrl from '../../utils/getWinUrl'
 import { newIcalinguaWindow } from '../../utils/IcalinguaWindow'
-import AtCacheItem from '../../types/AtCacheElem'
+import oicqAdapter from '../adapters/oicqAdapter'
+import socketIoAdapter from '../adapters/socketIoAdapter'
+import atCache from '../utils/atCache'
+import { getConfig } from '../utils/configManager'
+import errorHandler from '../utils/errorHandler'
+import getFriends from '../utils/getFriends'
+import * as themes from '../utils/themes'
 
 let adapter: Adapter
 if (getConfig().adapter === 'oicq') adapter = oicqAdapter
@@ -50,6 +49,7 @@ export const {
     ignoreChat,
     removeChat,
     deleteMessage,
+    hideMessage,
     revealMessage,
     renewMessageURL,
     fetchHistory,
@@ -101,6 +101,7 @@ ipcMain.on('sendMessage', (_, data) => {
     atCache.clear()
 })
 ipcMain.on('deleteMessage', (_, roomId: number, messageId: string) => deleteMessage(roomId, messageId))
+ipcMain.on('hideMessage', (_, roomId: number, messageId: string) => hideMessage(roomId, messageId))
 ipcMain.handle('fetchMessage', (_, { roomId, offset }: { roomId: number; offset: number }) => {
     offset === 0 && getConfig().fetchHistoryOnChatOpen && fetchLatestHistory(roomId)
     return adapter.fetchMessages(roomId, offset)
@@ -134,6 +135,12 @@ ipcMain.on('openForward', async (_, resId: string) => {
         // theme
         win.webContents.send('theme:sync-theme-data', themes.getThemeData())
         win.webContents.setZoomFactor(getConfig().zoomFactor / 100)
+        win.webContents.setWindowOpenHandler((details) => {
+            shell.openExternal(details.url)
+            return {
+                action: 'deny',
+            }
+        })
     })
 })
 ipcMain.handle('getIgnoredChats', adapter.getIgnoredChats)
@@ -145,7 +152,7 @@ ipcMain.on('setGroupKick', (_, gin, uin) => adapter.setGroupKick(gin, uin))
 ipcMain.on('setGroupLeave', (_, gin) => adapter.setGroupLeave(gin))
 ipcMain.on('setGroupBan', (_, gin, uin, duration?) => adapter.setGroupBan(gin, uin, duration))
 ipcMain.on('setGroupAnonymousBan', (_, gin, flag, duration?) => adapter.setGroupAnonymousBan(gin, flag, duration))
-ipcMain.on('makeForward', (_, fakes, dm, target) => adapter.makeForward(fakes, dm, target))
+ipcMain.on('makeForward', (_, fakes, dm, origin, target) => adapter.makeForward(fakes, dm, origin, target))
 ipcMain.handle('getSystemMsg', async () => await adapter.getSystemMsg())
 ipcMain.on('handleRequest', (_, type: 'friend' | 'group', flag: string, accept: boolean = true) =>
     adapter.handleRequest(type, flag, accept),
